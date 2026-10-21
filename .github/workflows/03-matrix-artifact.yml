@@ -1,0 +1,64 @@
+name: 03-matrix-artifact
+
+# 언제 실행할지.
+on:
+  push:
+    paths: ['.github/workflows/03-matrix-artifact.yml']
+  pull_request:
+    paths: ['.github/workflows/03-matrix-artifact.yml']
+  workflow_dispatch: # actions tab에 run workflow 버튼이 생겨서 수동 실행 가능.
+
+# 이 워크플로가 받는 GITHUB_TOKEN 의 권한을 저장소 읽기만으로 줄임.
+permissions:
+  contents: read
+
+jobs:
+  build: # 잡 ID
+    strategy:
+      fail-fast: false #하나가 실패해도 나머지하나는 끝까지 돌아서 어느 쪽이 실패했는 지 확인 가능.
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7 # 러너는 빈 머신이라 저장소 코드 먼저 내려받아야함.
+      - uses: actions/setup-java@v6 # JDK 설치
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v6 # gradle 실행환경 준비, gradle 캐시를 자동으로 저장, 복원
+
+      - name: jar 만들기 (테스트 제외)
+        run: chmod +x gradlew && ./gradlew bootJar -x test --no-daemon
+
+      - name: 결과 기록
+        run: | 
+          mkdir -p out
+          {
+            echo "runner = ${{ matrix.runner }} ($(uname -m))"
+            ls -l build/libs/*.jar
+          } > "out/${{ matrix.runner }}.txt"
+
+      # artifact는 잡이 끝나면 사라지는 러너의 파일을 github 저장소 쪽에 올려두는 기능.
+      # 잡끼리는 머신이 달라 파일을 직접 공유할 수 없으므로 이걸로 넘김.
+      - uses: actions/upload-artifact@v7
+        with:
+          name: result-${{ matrix.runner }} # 아티팩트 이름.
+          path: out/ # 이 폴더 내용만 올림.
+          retention-days: 1 # 하루 뒤 자동 삭제.
+
+  collect:
+    needs: build # build의 매트릭스 잡 2개가 모두 성공한 뒤 시작 설정. 둘 중 하나라도 실패하면 collect는 skip 됨.
+    runs-on: ubuntu-24.04
+    steps:
+        # 다른 러너들이 올린 파일을 이 러너로 받아 옴.
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: result-*
+          merge-multiple: true # 하위 폴더 없이 all/ 한 곳에 평평하게 합침.
+          path: all/
+
+      - name: 모아서 보기
+        run: |
+          ls -l all/
+          cat all/*.txt
+
